@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  mariadb:
+    image: mariadb:10.3.29
+    container_name: mariadb_container
+    restart: unless-stopped
+    environment:
+      - MARIADB_ROOT_PASSWORD=your_root_password
+      - MARIADB_DATABASE=flask_db
+      - MARIADB_USER=flask_user
+      - MARIADB_PASSWORD=flask_pass
+    volumes:
+      # (권장) conf.d 아래로 마운트
+      - ./mariadb/my.cnf:/etc/mysql/conf.d/z-custom.cnf:ro
+      - ./data/mariadb:/var/lib/mysql 
+      - mariadb_data:/var/lib/mysql
+      # 디렉터리 전체 마운트 (keyfile 포함)
+      - ./mariadb/encryption:/etc/mysql/encryption:ro
+    ports:
+      - "3307:3306"
+
+  mongo:
+    image: mongo:6.0
+    container_name: mongo_container
+    restart: unless-stopped
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=mongo_root
+      - MONGO_INITDB_ROOT_PASSWORD=mongo_root_password
+    volumes:
+      - mongo_data:/data/db
+    ports:
+      - "27017:27017"
+
+  flask:
+    build:
+      context: ./flask
+      dockerfile: Dockerfile
+    container_name: flask_container
+    restart: unless-stopped
+    depends_on:
+      - mariadb
+      - mongo
+    ports:
+      - "5000:5000"
+    environment:
+      - DB_HOST=mariadb_container
+      - DB_USER=flask_user
+      - DB_PASSWORD=flask_pass
+      - DB_NAME=flask_db
+      - MONGO_HOST=mongo_container
+      - MONGO_USER=mongo_root
+      - MONGO_PASS=mongo_root_password
+    volumes:
+      # .ibd 파일 크기 관측을 위해 읽기전용 마운트 (논문 방식 핵심)
+      - mariadb_data:/var/lib/mysql:ro
+
+volumes:
+  mariadb_data:
+  mongo_data:

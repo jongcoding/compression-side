@@ -6,17 +6,17 @@ services:
     container_name: mariadb_container
     restart: unless-stopped
     environment:
-      - MARIADB_ROOT_PASSWORD=your_root_password     # 루트 계정 비밀번호
-      - MARIADB_DATABASE=flask_db                    # 자동 생성할 DB
-      - MARIADB_USER=flask_user                      # 자동 생성할 사용자
-      - MARIADB_PASSWORD=flask_pass                  # 자동 생성할 사용자의 비밀번호
+      - MARIADB_ROOT_PASSWORD=your_root_password
+      - MARIADB_DATABASE=flask_db
+      - MARIADB_USER=flask_user
+      - MARIADB_PASSWORD=flask_pass
     volumes:
-      # 1) my.cnf (압축/암호화 설정 포함)
-      - ./mariadb/my.cnf:/etc/mysql/my.cnf
-      # 2) DB 데이터 영구 저장 볼륨
+      # (권장) conf.d 아래로 마운트
+      - ./mariadb/my.cnf:/etc/mysql/conf.d/z-custom.cnf:ro
+      - ./data/mariadb:/var/lib/mysql 
       - mariadb_data:/var/lib/mysql
-      # 3) File Key Management 키 파일 (읽기 전용 권장)
-      - ./mariadb/encryption/keyfile:/etc/mysql/encryption/keyfile:ro
+      # 디렉터리 전체 마운트 (keyfile 포함)
+      - ./mariadb/encryption:/etc/mysql/encryption:ro
     ports:
       - "3307:3306"
 
@@ -44,15 +44,16 @@ services:
     ports:
       - "5000:5000"
     environment:
-      # Flask 앱에서 DB 연결 시 참고할 환경변수
       - DB_HOST=mariadb_container
       - DB_USER=flask_user
       - DB_PASSWORD=flask_pass
       - DB_NAME=flask_db
-
       - MONGO_HOST=mongo_container
       - MONGO_USER=mongo_root
       - MONGO_PASS=mongo_root_password
+    volumes:
+      # .ibd 파일 크기 관측을 위해 읽기전용 마운트 (논문 방식 핵심)
+      - mariadb_data:/var/lib/mysql:ro
 
 volumes:
   mariadb_data:

