@@ -92,6 +92,16 @@ class MariaDBController:
     # 실제 신호(핵심): .ibd 할당 바이트
     def get_table_size_alloc(self, tablename):
         return get_ibd_allocated_bytes(self.datadir, self.db_name, tablename)
+    def get_table_size(self, tablename):
+        try:
+            # 파일시스템 반영/안정화를 위해 flush + 작은 대기
+            self.flush_and_wait(tablename, sleep_sec=0.2)
+        except Exception:
+            # flush 실패해도 계속 진행하도록 안전히 무시
+            pass
+
+        # 실제 신호(할당 바이트)를 반환
+        return self.get_table_size_alloc(tablename)
 
     # 플러시/대기: 파일시스템 반영 안정화
     def flush_and_wait(self, tablename, sleep_sec=0.2):
@@ -104,8 +114,14 @@ def get_filler_str(n):
     alphabet = string.ascii_letters + string.digits + string.punctuation
     return ''.join(random.choices(alphabet, k=n))
 
-def get_compressible_str(n, ch='a'):
-    return ch * n
+def get_compressible_str(n, ch='a', char=None):
+    """
+    n: 길이
+    ch: 기본 문자(기존 코드)
+    char: 과거/다른 코드가 사용했을 수 있는 키워드 인자(호환용)
+    """
+    c = ch if char is None else char
+    return c * n
 
 # ----- 간단 데모(논문식 신호 보기) -----
 def demo_side_channel_compression():
