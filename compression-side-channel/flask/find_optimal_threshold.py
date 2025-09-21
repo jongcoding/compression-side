@@ -23,11 +23,12 @@ for c in ["snappy", "zlib", "lz4"]:
                 if(row[0] == "0" or row[0] == "1"):
                     true_labels.append(int(row[0]))
                     ref_scores.append((int(row[2]) if row[2] != "0" else 1, int(row[3]), int(row[4])))
+                    # ↓↓↓ 헤더(문자열) 때문에 깨지던 부분을 데이터 행 안으로 이동
+                    setup_times.append(float(row[5]))
+                    guess_times.append(float(row[6]))
                 else:
                     pass
                 #print(row)
-                setup_times.append(float(row[5]))
-                guess_times.append(float(row[6]))
 
     # print(true_labels)
     true_labels = np.array(true_labels)
