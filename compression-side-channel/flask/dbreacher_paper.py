@@ -1,7 +1,5 @@
-import os
-import random
-
 import utils.mariadb_utils as utils
+import random
 
 '''
 Parent class for all DBREACHers
@@ -11,10 +9,10 @@ class DBREACHer():
         self.control = controller
         self.table = tablename
         self.startIdx = startIdx
-        numFillerRows = int(os.getenv("DBREACH_FILLER_ROWS", "600"))
+        numFillerRows = 200
         self.fillers = [''.join(random.choices(fillerCharSet, k=maxRowSize)) for _ in range(numFillerRows)]
         self.compressChar = chr(compressCharAscii)
-        self.numFillerRows = numFillerRows
+        self.numFillerRows = 200
         self.fillerCharSet = fillerCharSet
         self.maxRowSize = maxRowSize
 
@@ -37,3 +35,4 @@ class DBREACHer():
     # return compressibility score of current guess, or None if it cannot yet be calculated
     def getCompressibilityScoreOfCurrentGuess(self) -> float:
         return None
+
