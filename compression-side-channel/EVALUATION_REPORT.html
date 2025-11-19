@@ -222,6 +222,22 @@
                 <td>339</td>
                 <td>7.3</td>
             </tr>
+            <tr class="highlight">
+                <td>20</td>
+                <td>10</td>
+                <td>9</td>
+                <td><strong>81.1%</strong></td>
+                <td>313</td>
+                <td>7.3</td>
+            </tr>
+            <tr>
+                <td>40</td>
+                <td>1</td>
+                <td>10</td>
+                <td>20.0%</td>
+                <td>435</td>
+                <td>10.3</td>
+            </tr>
             <tr>
                 <td>40</td>
                 <td>5</td>
@@ -229,6 +245,22 @@
                 <td>52.0%</td>
                 <td>619</td>
                 <td>13.2</td>
+            </tr>
+            <tr class="highlight">
+                <td>40</td>
+                <td>10</td>
+                <td>8</td>
+                <td><strong>78.8%</strong></td>
+                <td>676</td>
+                <td>30.1</td>
+            </tr>
+            <tr>
+                <td>100</td>
+                <td>5</td>
+                <td>3*</td>
+                <td>0.0%</td>
+                <td>1037</td>
+                <td>22.9</td>
             </tr>
         </table>
         <p style="color: #7f8c8d; font-size: 12px;">* 일부 trial에서 setup 실패</p>
@@ -298,24 +330,38 @@
         </div>
 
         <h2>5. 논문과의 비교</h2>
+
+        <h3>5.1 평가 지표 비교</h3>
         <table>
             <tr>
                 <th>지표</th>
-                <th>G-DBREACH 논문</th>
+                <th>DBREACH/G-DBREACH 논문</th>
                 <th>본 구현</th>
                 <th>비고</th>
             </tr>
             <tr>
-                <td>Random 정확도</td>
+                <td>Random 정확도 (n=20)</td>
                 <td>~80-95%</td>
-                <td>76-88%</td>
-                <td>유사한 범위</td>
+                <td>80-88%</td>
+                <td>✓ 논문 범위 내</td>
+            </tr>
+            <tr>
+                <td>English 정확도 (n=20)</td>
+                <td>~72% (길이 20)</td>
+                <td>40-88%</td>
+                <td>k값에 따라 변동</td>
             </tr>
             <tr>
                 <td>쿼리 효율성</td>
                 <td>O(log N)</td>
                 <td>O(log N)</td>
-                <td>동일</td>
+                <td>✓ 동일</td>
+            </tr>
+            <tr>
+                <td>후보당 쿼리 수</td>
+                <td>~7-12</td>
+                <td>~10-12</td>
+                <td>✓ 유사</td>
             </tr>
             <tr>
                 <td>Hole Punching</td>
@@ -324,6 +370,16 @@
                 <td>MariaDB 10.3</td>
             </tr>
         </table>
+
+        <h3>5.2 주요 관찰</h3>
+        <div class="finding-box">
+            <ul>
+                <li><strong>Random vs English</strong>: 논문과 동일하게, Random 데이터가 English보다 높은 정확도</li>
+                <li><strong>k 값의 영향</strong>: k가 클수록 평균화 효과로 정확도 상승 (논문과 일치)</li>
+                <li><strong>n 스케일링</strong>: n이 증가할수록 정확도 감소하는 경향 (논문과 일치)</li>
+                <li><strong>Binary Search</strong>: log₂(100) ≈ 7회 반복으로 효율적 탐색 (G-DBREACH 핵심 기여)</li>
+            </ul>
+        </div>
 
         <h2>6. 결론</h2>
         <div class="conclusion">
@@ -359,7 +415,7 @@
                     borderWidth: 1
                 }, {
                     label: 'English',
-                    data: [40, 88, null, null, 52, null, null],
+                    data: [40, 88, 81, 20, 52, 79, 0],
                     backgroundColor: 'rgba(231, 76, 60, 0.7)',
                     borderColor: 'rgba(231, 76, 60, 1)',
                     borderWidth: 1
@@ -473,7 +529,7 @@
                     tension: 0.3
                 }, {
                     label: 'English (n=20)',
-                    data: [40, 88, null],
+                    data: [40, 88, 81],
                     borderColor: 'rgba(231, 76, 60, 1)',
                     backgroundColor: 'rgba(231, 76, 60, 0.2)',
                     fill: true,
